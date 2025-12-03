@@ -1,0 +1,13 @@
+{
+  "plugin.name": "Dify Translations",
+  "plugin.description": "Translate content using Dify AI workflows",
+  "action.translate": "Translate with Dify",
+  "action.translating": "Translating...",
+  "dialog.title": "Translate with Dify",
+  "dialog.content": "This will send the content to Dify for translation into all available locales. The translations will be saved as drafts.",
+  "dialog.note": "Make sure you have saved any changes before translating.",
+  "notification.success": "Translation request sent successfully",
+  "notification.error": "Failed to send translation request",
+  "notification.saveFirst": "Document must be saved before translating"
+}
+
