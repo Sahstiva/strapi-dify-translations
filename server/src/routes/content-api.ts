@@ -7,7 +7,8 @@ export default {
       handler: 'translation.callback',
       config: {
         policies: [],
-        auth: false, // Allow external services to call this endpoint
+        auth: false, // Disable Strapi's default auth, use custom middleware instead
+        middlewares: ['plugin::dify-translations.callback-auth'],
         description: 'Receive translated content from Dify workflow',
       },
     },

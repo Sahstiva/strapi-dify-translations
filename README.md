@@ -58,8 +58,11 @@ export default ({ env }) => ({
       // Required: Dify workflow endpoint URL
       difyEndpoint: env('DIFY_WORKFLOW_ENDPOINT'),
       
-      // Optional: API key for Dify authentication
+      // Optional: API key for Dify authentication (outgoing requests to Dify)
       difyApiKey: env('DIFY_API_KEY'),
+      
+      // Recommended: API token for callback authentication (incoming requests from Dify)
+      callbackApiToken: env('DIFY_CALLBACK_TOKEN'),
       
       // Optional: Source locale (default: 'en')
       sourceLocale: 'en',
@@ -79,7 +82,24 @@ Add environment variables to your `.env` file:
 ```env
 DIFY_WORKFLOW_ENDPOINT=https://your-dify-instance.com/v1/workflows/run
 DIFY_API_KEY=your-dify-api-key
+DIFY_CALLBACK_TOKEN=your-secure-callback-token
 ```
+
+### Callback Authentication
+
+The callback endpoint is protected by API token authentication. When `callbackApiToken` is configured, all requests to `/api/dify-translations/callback` must include an `Authorization` header:
+
+```
+Authorization: Bearer your-secure-callback-token
+```
+
+Or simply:
+
+```
+Authorization: your-secure-callback-token
+```
+
+If no `callbackApiToken` is configured, the endpoint will be open (a warning will be logged).
 
 ## API Endpoints
 

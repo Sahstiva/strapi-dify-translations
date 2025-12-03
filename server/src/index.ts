@@ -5,6 +5,7 @@ import config from './config';
 import routes from './routes';
 import controllers from './controllers';
 import services from './services';
+import middlewares from './middlewares';
 
 export default {
   register,
@@ -13,5 +14,6 @@ export default {
   routes,
   controllers,
   services,
+  middlewares,
 };
 
