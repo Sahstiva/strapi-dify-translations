@@ -20,6 +20,15 @@
     },
     "./package.json": "./package.json"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sahstiva/strapi-dify-translations"
+  },
+  "bugs": {
+    "url": "https://github.com/Sahstiva/strapi-dify-translations/issues"
+  },
+  "homepage": "https://github.com/Sahstiva/strapi-dify-translations#readme",
+  "keywords": ["strapi", "strapi-plugin", "translations", "i18n", "dify"],
   "files": [
     "dist"
   ],
