@@ -10,8 +10,10 @@ export default {
     sourceLocale: 'en',
     // Callback URL base (will be combined with Strapi URL)
     callbackBasePath: '/dify-translations/callback',
-    // Translatable field types
-    translatableFieldTypes: ['string', 'text', 'richtext', 'blocks'],
+    // Fields to translate (if empty, auto-detect from schema)
+    translatableFields: [] as string[],
+    // User identifier for Dify requests
+    difyUser: 'strapi-user',
   },
   validator: (config: Record<string, unknown>) => {
     if (config.difyEndpoint && typeof config.difyEndpoint !== 'string') {
@@ -25,6 +27,12 @@ export default {
     }
     if (config.sourceLocale && typeof config.sourceLocale !== 'string') {
       throw new Error('sourceLocale must be a string');
+    }
+    if (config.translatableFields && !Array.isArray(config.translatableFields)) {
+      throw new Error('translatableFields must be an array of field names');
+    }
+    if (config.difyUser && typeof config.difyUser !== 'string') {
+      throw new Error('difyUser must be a string');
     }
   },
 };

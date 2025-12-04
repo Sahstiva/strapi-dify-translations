@@ -6,10 +6,13 @@ interface TranslateRequestBody {
 }
 
 interface CallbackRequestBody {
-  documentId: string;
+  document_id: string;
   locale: string;
   fields: Record<string, unknown>;
-  runId: string;
+  metadata?: {
+    success?: string;
+    error?: string;
+  };
 }
 
 const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
@@ -40,18 +43,18 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Receive translated content from Dify workflow
    */
   async callback(ctx: any) {
-    const { documentId, locale, fields, runId } = ctx.request.body as CallbackRequestBody;
+    const { document_id, locale, fields, metadata } = ctx.request.body as CallbackRequestBody;
     const { content_type: contentType } = ctx.query;
 
-    if (!documentId || !locale || !fields || !runId || !contentType) {
-      return ctx.badRequest('Missing required fields: documentId, locale, fields, runId, or content_type query parameter');
+    if (!document_id || !locale || !fields || !contentType) {
+      return ctx.badRequest('Missing required fields: document_id, locale, fields, or content_type query parameter');
     }
 
     try {
       const result = await strapi
         .plugin('dify-translations')
         .service('translation')
-        .storeTranslation(documentId, contentType, locale, fields, runId);
+        .storeTranslation(document_id, contentType, locale, fields, metadata);
 
       return ctx.send(result);
     } catch (error: any) {
@@ -70,7 +73,8 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       difyEndpoint: config('difyEndpoint'),
       sourceLocale: config('sourceLocale'),
       callbackBasePath: config('callbackBasePath'),
-      // Don't expose API key
+      translatableFields: config('translatableFields'),
+      // Don't expose API keys
     });
   },
 
@@ -92,20 +96,14 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
-   * Get translatable fields for a content type
+   * Get translatable fields from config
    */
   async getTranslatableFields(ctx: any) {
-    const { contentType } = ctx.params;
-
-    if (!contentType) {
-      return ctx.badRequest('Missing contentType parameter');
-    }
-
     try {
-      const fields = await strapi
+      const fields = strapi
         .plugin('dify-translations')
         .service('translation')
-        .getTranslatableFields(contentType);
+        .getTranslatableFields();
 
       return ctx.send({ fields });
     } catch (error: any) {
@@ -116,4 +114,3 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
 });
 
 export default controller;
-

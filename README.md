@@ -64,14 +64,17 @@ export default ({ env }) => ({
       // Recommended: API token for callback authentication (incoming requests from Dify)
       callbackApiToken: env('DIFY_CALLBACK_TOKEN'),
       
+      // Required: Fields to translate (must be configured)
+      translatableFields: ['title', 'content', 'excerpt', 'meta_title', 'meta_description'],
+      
       // Optional: Source locale (default: 'en')
       sourceLocale: 'en',
       
+      // Optional: User identifier for Dify requests (default: 'strapi-user')
+      difyUser: 'strapi-user',
+      
       // Optional: Callback base path (default: '/dify-translations/callback')
       callbackBasePath: '/dify-translations/callback',
-      
-      // Optional: Translatable field types (default: ['string', 'text', 'richtext', 'blocks'])
-      translatableFieldTypes: ['string', 'text', 'richtext', 'blocks'],
     },
   },
 });
@@ -167,17 +170,23 @@ When the user clicks "Translate with Dify", the plugin sends this payload to you
 
 ```json
 {
-  "document_id": "strapi-document-id",
-  "fields": {
-    "title": "Original title",
-    "content": "Original content...",
-    "excerpt": "Original excerpt..."
+  "inputs": {
+    "document_id": "d6x9zn0gqhsd8tghmz46wylm",
+    "title": "Blog post for testing translations",
+    "content": "Your content here...",
+    "source_locale": "en",
+    "target_locales": "[\"fr\", \"es\", \"de\"]",
+    "callback_url": "https://your-strapi.com/api/dify-translations/callback?content_type=api::blog-post.blog-post"
   },
-  "source_locale": "en",
-  "target_locales": ["fr", "de", "es"],
-  "callback_url": "https://your-strapi.com/api/dify-translations/callback?content_type=api::blog-post.blog-post"
+  "response_mode": "blocking",
+  "user": "strapi-user"
 }
 ```
+
+**Note:** 
+- Fields are placed directly in `inputs` (not wrapped in a `fields` object)
+- `target_locales` is a stringified JSON array
+- Only fields configured in `translatableFields` that have values are included
 
 ### Expected Callback Payload (from Dify)
 
@@ -185,16 +194,24 @@ Your Dify workflow should call the callback URL for each translated locale:
 
 ```json
 {
-  "documentId": "strapi-document-id",
-  "locale": "fr",
+  "document_id": "d6x9zn0gqhsd8tghmz46wylm",
+  "locale": "es",
   "fields": {
-    "title": "Titre en français",
-    "content": "Contenu en français...",
-    "excerpt": "Extrait en français..."
+    "title": "Título traducido",
+    "content": "Contenido traducido..."
   },
-  "runId": "unique-workflow-run-id"
+  "metadata": {
+    "success": "true",
+    "error": ""
+  }
 }
 ```
+
+**Note:**
+- `document_id` uses underscore (not camelCase)
+- Translated fields are wrapped in `fields` object
+- `metadata.success` should be `"true"` for successful translations
+- `metadata.error` contains error message if translation failed
 
 ## How It Works
 

@@ -30,11 +30,11 @@ export default {
     },
     {
       method: 'GET',
-      path: '/translatable-fields/:contentType',
+      path: '/translatable-fields',
       handler: 'translation.getTranslatableFields',
       config: {
         policies: [],
-        description: 'Get translatable fields for a content type',
+        description: 'Get translatable fields from config',
       },
     },
   ],
