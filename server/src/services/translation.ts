@@ -85,6 +85,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     const difyEndpoint = pluginConfig('difyEndpoint') as string;
     const difyApiKey = pluginConfig('difyApiKey') as string;
     const sourceLocale = pluginConfig('sourceLocale') as string;
+    const serverUrl = pluginConfig('callbackUrl') as string;
     const callbackBasePath = pluginConfig('callbackBasePath') as string;
     const difyUser = pluginConfig('difyUser') as string;
 
@@ -108,7 +109,6 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     // Build callback URL
-    const serverUrl = strapi.config.get('server.url') || `http://localhost:${strapi.config.get('server.port', 1337)}`;
     const callbackUrl = `${serverUrl}/api${callbackBasePath}?content_type=${encodeURIComponent(contentType)}`;
 
     // Prepare payload for Dify with new structure
