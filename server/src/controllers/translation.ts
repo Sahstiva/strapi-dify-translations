@@ -3,6 +3,7 @@ import type { Core } from '@strapi/strapi';
 interface TranslateRequestBody {
   documentId: string;
   contentType: string;
+  targetLocales?: string[];
 }
 
 interface CallbackRequestBody {
@@ -20,7 +21,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Send content to Dify for translation
    */
   async translate(ctx: any) {
-    const { documentId, contentType } = ctx.request.body as TranslateRequestBody;
+    const { documentId, contentType, targetLocales } = ctx.request.body as TranslateRequestBody;
 
     if (!documentId || !contentType) {
       return ctx.badRequest('Missing documentId or contentType');
@@ -30,7 +31,7 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       const result = await strapi
         .plugin('dify-translations')
         .service('translation')
-        .sendToTranslation(documentId, contentType);
+        .sendToTranslation(documentId, contentType, targetLocales);
 
       return ctx.send(result);
     } catch (error: any) {
@@ -88,7 +89,10 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
         .service('translation')
         .getAvailableLocales();
 
-      return ctx.send({ locales });
+      const pluginConfig = strapi.plugin('dify-translations').config;
+      const sourceLocale = pluginConfig('sourceLocale') as string;
+
+      return ctx.send({ locales, sourceLocale });
     } catch (error: any) {
       strapi.log.error('Get locales error:', error);
       return ctx.badRequest(error.message || 'Failed to get locales');

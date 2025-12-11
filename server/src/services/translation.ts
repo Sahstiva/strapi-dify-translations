@@ -32,23 +32,26 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Get available locales from i18n plugin
    */
-  async getAvailableLocales(): Promise<string[]> {
+  async getAvailableLocales(): Promise<Array<{ code: string; name: string }>> {
     try {
       // Try to get locales from i18n plugin
       const i18nPlugin = strapi.plugin('i18n');
       if (!i18nPlugin) {
         strapi.log.warn('i18n plugin not found, returning default locale');
-        return ['en'];
+        return [{ code: 'en', name: 'English' }];
       }
 
       const locales = await strapi.db.query('plugin::i18n.locale').findMany({
         select: ['code', 'name'],
       });
 
-      return locales.map((locale: any) => locale.code);
+      return locales.map((locale: any) => ({
+        code: locale.code,
+        name: locale.name || locale.code,
+      }));
     } catch (error) {
       strapi.log.error('Error getting locales:', error);
-      return ['en'];
+      return [{ code: 'en', name: 'English' }];
     }
   },
 
@@ -100,8 +103,15 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
   /**
    * Send content to Dify for translation
+   * @param documentId - The document ID to translate
+   * @param contentType - The content type (e.g., 'api::article.article')
+   * @param selectedLocales - Optional array of target locale codes. If not provided, all non-source locales are used.
    */
-  async sendToTranslation(documentId: string, contentType: string): Promise<{ success: boolean; message: string }> {
+  async sendToTranslation(
+    documentId: string,
+    contentType: string,
+    selectedLocales?: string[]
+  ): Promise<{ success: boolean; message: string }> {
     const pluginConfig = strapi.plugin('dify-translations').config;
     const difyEndpoint = pluginConfig('difyEndpoint') as string;
     const difyApiKey = pluginConfig('difyApiKey') as string;
@@ -114,9 +124,18 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       throw new Error('Dify endpoint is not configured');
     }
 
-    // Get available locales
-    const allLocales = await this.getAvailableLocales();
-    const targetLocales = allLocales.filter(locale => locale !== sourceLocale);
+    // Determine target locales
+    let targetLocales: string[];
+    if (selectedLocales && selectedLocales.length > 0) {
+      // Use user-selected locales, but filter out source locale if accidentally included
+      targetLocales = selectedLocales.filter(locale => locale !== sourceLocale);
+    } else {
+      // Fallback to all available locales except source
+      const allLocales = await this.getAvailableLocales();
+      targetLocales = allLocales
+        .map(locale => locale.code)
+        .filter(code => code !== sourceLocale);
+    }
 
     if (targetLocales.length === 0) {
       throw new Error('No target locales available for translation');
@@ -386,9 +405,38 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Check if a content type is localized
+   */
+  isContentTypeLocalized(contentType: string): boolean {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return false;
+    }
+    // Check if the content type has i18n enabled
+    return (schema as any).pluginOptions?.i18n?.localized === true;
+  },
+
+  /**
+   * Get the target content type for a relation field
+   */
+  getRelationTarget(contentType: string, fieldName: string): string | null {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return null;
+    }
+    const attribute = schema.attributes[fieldName];
+    if (attribute?.type === 'relation' && attribute.target) {
+      return attribute.target;
+    }
+    return null;
+  },
+
+  /**
    * Format relation value for update (convert to connect format)
    */
-  formatRelationForUpdate(value: unknown): { connect: Array<{ documentId: string }> } | null {
+  formatRelationForUpdate(
+    value: unknown
+  ): { connect: Array<{ documentId: string }> } | null {
     if (!value) {
       return null;
     }
@@ -401,6 +449,35 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     return {
       connect: ids.map(id => ({ documentId: String(id) })),
     };
+  },
+
+  /**
+   * Check if related documents exist in the target locale
+   * Returns array of document IDs that exist in the target locale
+   */
+  async filterExistingRelations(
+    relationTarget: string,
+    documentIds: string[],
+    locale: string
+  ): Promise<string[]> {
+    const existingIds: string[] = [];
+
+    for (const docId of documentIds) {
+      try {
+        const doc = await strapi.documents(relationTarget as any).findOne({
+          documentId: docId,
+          locale,
+        });
+        if (doc) {
+          existingIds.push(docId);
+        }
+      } catch (error) {
+        // Document doesn't exist in this locale, skip it
+        strapi.log.debug(`Related document ${docId} not found in locale ${locale}`);
+      }
+    }
+
+    return existingIds;
   },
 
   /**
@@ -483,12 +560,33 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
         // Check if this is a relation field
         if (relationFields.includes(fieldName)) {
-          // For relations, use existing if available, otherwise copy from source
+          // Check if the relation target is a localized content type
+          const relationTarget = this.getRelationTarget(contentType, fieldName);
+          const isTargetLocalized = relationTarget ? this.isContentTypeLocalized(relationTarget) : false;
+
+          // Prefer existing value, fall back to source value
           const relationValue = existingValue || sourceValue;
-          if (relationValue) {
-            const formattedRelation = this.formatRelationForUpdate(relationValue);
-            if (formattedRelation) {
-              mergedData[fieldName] = formattedRelation;
+
+          if (relationValue && relationTarget) {
+            if (isTargetLocalized) {
+              // For localized relations, check which related documents exist in target locale
+              const allIds = this.extractRelationIds(relationValue);
+              const existingIds = await this.filterExistingRelations(relationTarget, allIds, locale);
+
+              if (existingIds.length > 0) {
+                mergedData[fieldName] = {
+                  connect: existingIds.map(id => ({ documentId: id })),
+                };
+                strapi.log.debug(`Relation ${fieldName}: ${existingIds.length}/${allIds.length} related documents exist in locale ${locale}`);
+              } else if (allIds.length > 0) {
+                strapi.log.warn(`Skipping relation ${fieldName} - none of ${allIds.length} related document(s) exist in locale ${locale}`);
+              }
+            } else {
+              // For non-localized relations, copy directly
+              const formattedRelation = this.formatRelationForUpdate(relationValue);
+              if (formattedRelation) {
+                mergedData[fieldName] = formattedRelation;
+              }
             }
           }
         }
