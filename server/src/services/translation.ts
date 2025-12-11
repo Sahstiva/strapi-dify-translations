@@ -7,6 +7,27 @@ const insecureAgent = new Agent({
   },
 });
 
+interface AttributeSchema {
+  type: string;
+  relation?: string;
+  target?: string;
+  private?: boolean;
+  writable?: boolean;
+  configurable?: boolean;
+  pluginOptions?: {
+    i18n?: {
+      localized?: boolean;
+    };
+  };
+}
+
+interface ContentTypeSchema {
+  attributes: Record<string, AttributeSchema>;
+  options?: {
+    draftAndPublish?: boolean;
+  };
+}
+
 const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Get available locales from i18n plugin
@@ -157,6 +178,153 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Get relation field names from content type schema
+   */
+  getRelationFields(contentType: string): string[] {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return [];
+    }
+
+    const relationFields: string[] = [];
+    for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
+      if (attribute.type === 'relation') {
+        relationFields.push(fieldName);
+      }
+    }
+    return relationFields;
+  },
+
+  /**
+   * Get component and dynamic zone field names from content type schema
+   */
+  getComponentFields(contentType: string): { components: string[]; dynamicZones: string[] } {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return { components: [], dynamicZones: [] };
+    }
+
+    const components: string[] = [];
+    const dynamicZones: string[] = [];
+    
+    for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
+      if (attribute.type === 'component') {
+        components.push(fieldName);
+      } else if (attribute.type === 'dynamiczone') {
+        dynamicZones.push(fieldName);
+      }
+    }
+    
+    return { components, dynamicZones };
+  },
+
+  /**
+   * Get all localizable fields from content type schema (excluding system fields)
+   */
+  getLocalizableFields(contentType: string): string[] {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return [];
+    }
+
+    const excludedFields = [
+      'id', 'documentId', 'createdAt', 'updatedAt', 'publishedAt', 
+      'createdBy', 'updatedBy', 'locale', 'localizations'
+    ];
+
+    const localizableFields: string[] = [];
+    for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
+      // Skip system fields
+      if (excludedFields.includes(fieldName)) {
+        continue;
+      }
+      // Skip private fields
+      if (attribute.private) {
+        continue;
+      }
+      // Include the field if it's localizable (or i18n config is not set)
+      const isLocalized = attribute.pluginOptions?.i18n?.localized !== false;
+      if (isLocalized) {
+        localizableFields.push(fieldName);
+      }
+    }
+    
+    return localizableFields;
+  },
+
+  /**
+   * Build populate object for fetching all relations and components
+   */
+  buildPopulateObject(contentType: string): Record<string, boolean | object> {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return {};
+    }
+
+    const populate: Record<string, boolean | object> = {};
+    
+    for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
+      if (attribute.type === 'relation') {
+        // For relations, just populate with documentId
+        populate[fieldName] = {
+          fields: ['id', 'documentId'],
+        };
+      } else if (attribute.type === 'component' || attribute.type === 'dynamiczone') {
+        // For components and dynamic zones, populate deeply
+        populate[fieldName] = true;
+      } else if (attribute.type === 'media') {
+        // For media fields, get basic info
+        populate[fieldName] = {
+          fields: ['id', 'documentId', 'url', 'name'],
+        };
+      }
+    }
+    
+    return populate;
+  },
+
+  /**
+   * Extract relation IDs from a relation field value
+   */
+  extractRelationIds(value: unknown): string[] {
+    if (!value) {
+      return [];
+    }
+    
+    if (Array.isArray(value)) {
+      return value
+        .map((item: any) => item?.documentId || item?.id)
+        .filter(Boolean) as string[];
+    }
+    
+    if (typeof value === 'object' && value !== null) {
+      const obj = value as Record<string, unknown>;
+      const id = obj.documentId || obj.id;
+      return id ? [String(id)] : [];
+    }
+    
+    return [];
+  },
+
+  /**
+   * Format relation value for update (convert to connect format)
+   */
+  formatRelationForUpdate(value: unknown): { connect: Array<{ documentId: string }> } | null {
+    if (!value) {
+      return null;
+    }
+
+    const ids = this.extractRelationIds(value);
+    if (ids.length === 0) {
+      return null;
+    }
+
+    return {
+      connect: ids.map(id => ({ documentId: String(id) })),
+    };
+  },
+
+  /**
    * Store translated content from Dify callback
    */
   async storeTranslation(
@@ -176,62 +344,118 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     // Validate content type exists
-    const contentTypeSchema = strapi.contentTypes[contentType];
+    const contentTypeSchema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
     if (!contentTypeSchema) {
       throw new Error(`Content type ${contentType} not found`);
     }
 
-    // Get configured translatable fields to validate incoming data
-    const translatableFields = this.getTranslatableFields();
+    const pluginConfig = strapi.plugin('dify-translations').config;
+    const sourceLocale = pluginConfig('sourceLocale') as string;
 
-    // Filter fields to only include configured translatable ones
-    const validFields: Record<string, unknown> = {};
+    // Get configured translatable fields
+    const translatableFields = this.getTranslatableFields();
+    const relationFields = this.getRelationFields(contentType);
+    const { components: componentFields, dynamicZones: dynamicZoneFields } = this.getComponentFields(contentType);
+    const localizableFields = this.getLocalizableFields(contentType);
+
+    // Filter incoming translated fields to only include configured translatable ones
+    const translatedFields: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
       if (translatableFields.length === 0 || translatableFields.includes(key)) {
-        validFields[key] = value;
+        translatedFields[key] = value;
       } else {
         strapi.log.warn(`Field ${key} is not in translatable fields config for ${contentType}, skipping`);
       }
     }
 
-    if (Object.keys(validFields).length === 0) {
-      throw new Error('No valid translatable fields provided');
-    }
-
     strapi.log.info(`Storing translation for ${contentType} (${documentId}) in locale ${locale}`);
+    strapi.log.debug(`Translated fields from Dify: ${Object.keys(translatedFields).join(', ')}`);
 
     try {
-      // Check if locale version already exists
+      // Build populate object for fetching source document
+      const populate = this.buildPopulateObject(contentType);
+
+      // Fetch the source document from default locale with all relations
+      const sourceDocument = await strapi.documents(contentType as any).findOne({
+        documentId,
+        locale: sourceLocale,
+        populate,
+      });
+
+      if (!sourceDocument) {
+        throw new Error(`Source document ${documentId} not found for locale ${sourceLocale}`);
+      }
+
+      // Check if target locale version already exists
       const existingEntry = await strapi.documents(contentType as any).findOne({
         documentId,
         locale,
+        populate,
       });
 
-      if (existingEntry) {
-        // Update existing locale version
-        await strapi.documents(contentType as any).update({
-          documentId,
-          locale,
-          data: {
-            ...validFields,
-            publishedAt: null, // Keep as draft
-          },
-        });
+      // Build the merged data object
+      const mergedData: Record<string, unknown> = {};
 
-        strapi.log.info(`Updated existing translation for ${contentType} (${documentId}) in locale ${locale}`);
-      } else {
-        // Create new locale version using Document Service API
-        await strapi.documents(contentType as any).update({
-          documentId,
-          locale,
-          data: {
-            ...validFields,
-            publishedAt: null, // Keep as draft
-          },
-        });
+      // Process all localizable fields
+      for (const fieldName of localizableFields) {
+        const sourceValue = sourceDocument[fieldName];
+        const translatedValue = translatedFields[fieldName];
+        const existingValue = existingEntry?.[fieldName];
 
-        strapi.log.info(`Created new translation for ${contentType} (${documentId}) in locale ${locale}`);
+        // Check if this is a relation field
+        if (relationFields.includes(fieldName)) {
+          // For relations, use existing if available, otherwise copy from source
+          const relationValue = existingValue || sourceValue;
+          if (relationValue) {
+            const formattedRelation = this.formatRelationForUpdate(relationValue);
+            if (formattedRelation) {
+              mergedData[fieldName] = formattedRelation;
+            }
+          }
+        }
+        // Check if this is a component or dynamic zone field
+        else if (componentFields.includes(fieldName) || dynamicZoneFields.includes(fieldName)) {
+          // For components/dynamic zones, use existing if available, otherwise copy from source
+          const componentValue = existingValue ?? sourceValue;
+          if (componentValue !== undefined && componentValue !== null) {
+            mergedData[fieldName] = componentValue;
+          }
+        }
+        // Regular field
+        else {
+          // Priority: translated value > existing value > source value
+          if (translatedValue !== undefined && translatedValue !== null) {
+            // Use translated value from Dify
+            mergedData[fieldName] = translatedValue;
+          } else if (existingValue !== undefined && existingValue !== null) {
+            // Keep existing value in target locale
+            mergedData[fieldName] = existingValue;
+          } else if (sourceValue !== undefined && sourceValue !== null) {
+            // Copy from source locale
+            mergedData[fieldName] = sourceValue;
+          }
+        }
       }
+
+      strapi.log.debug(`Merged data fields: ${Object.keys(mergedData).join(', ')}`);
+
+      // Update or create the locale version
+      await strapi.documents(contentType as any).update({
+        documentId,
+        locale,
+        data: {
+          ...mergedData,
+          publishedAt: null, // Keep as draft
+        },
+      });
+
+      const actionType = existingEntry ? 'Updated' : 'Created';
+      strapi.log.info(`${actionType} translation for ${contentType} (${documentId}) in locale ${locale}`);
+      strapi.log.info(`Translated fields: ${Object.keys(translatedFields).join(', ')}`);
+      strapi.log.info(`Copied fields from source: ${localizableFields.filter(f => 
+        !Object.keys(translatedFields).includes(f) && 
+        mergedData[f] !== undefined
+      ).join(', ') || 'none'}`);
 
       return {
         success: true,
