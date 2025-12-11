@@ -141,13 +141,14 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         target_locales: JSON.stringify(targetLocales),
         callback_url: callbackUrl,
       },
-      response_mode: 'blocking',
+      response_mode: 'streaming',
       user: difyUser,
     };
 
     strapi.log.info('Sending translation request to Dify:', JSON.stringify(payload, null, 2));
 
     // Send to Dify endpoint (fire-and-forget, don't wait for response)
+    // Streaming mode returns Server-Sent Events (SSE)
     fetch(difyEndpoint, {
       method: 'POST',
       headers: {
@@ -162,8 +163,86 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         if (!response.ok) {
           const errorText = await response.text();
           strapi.log.error(`Dify API error: ${response.status} - ${errorText}`);
-        } else {
-          strapi.log.info('Dify translation request accepted');
+          return;
+        }
+
+        strapi.log.info('Dify translation request accepted, receiving SSE stream...');
+
+        // Process SSE stream
+        if (!response.body) {
+          strapi.log.warn('Dify response has no body');
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              strapi.log.info('Dify SSE stream completed');
+              break;
+            }
+
+            // Decode the chunk and add to buffer
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE events from buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            let currentEvent = '';
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+
+              if (trimmedLine.startsWith('event:')) {
+                currentEvent = trimmedLine.slice(6).trim();
+              } else if (trimmedLine.startsWith('data:')) {
+                const dataStr = trimmedLine.slice(5).trim();
+
+                if (dataStr) {
+                  try {
+                    const eventData = JSON.parse(dataStr);
+                    const eventType = currentEvent || eventData.event || 'unknown';
+
+                    // Log different event types with appropriate info
+                    switch (eventType) {
+                      case 'workflow_started':
+                        strapi.log.info(`[Dify] Workflow started: ${eventData.workflow_run_id || 'N/A'}`);
+                        break;
+                      case 'node_started':
+                        strapi.log.info(`[Dify] Node started: ${eventData.data?.node_type || 'unknown'} - ${eventData.data?.title || 'N/A'}`);
+                        break;
+                      case 'node_finished':
+                        strapi.log.info(`[Dify] Node finished: ${eventData.data?.node_type || 'unknown'} - ${eventData.data?.title || 'N/A'}`);
+                        break;
+                      case 'workflow_finished':
+                        strapi.log.info(`[Dify] Workflow finished: status=${eventData.data?.status || 'unknown'}`);
+                        break;
+                      case 'text_chunk':
+                        // Log text chunks at debug level to avoid spam
+                        strapi.log.debug(`[Dify] Text chunk received`);
+                        break;
+                      case 'error':
+                        strapi.log.error(`[Dify] Error: ${eventData.message || JSON.stringify(eventData)}`);
+                        break;
+                      default:
+                        strapi.log.debug(`[Dify] Event: ${eventType}`);
+                    }
+                  } catch {
+                    // Not valid JSON, log as raw data
+                    strapi.log.debug(`[Dify] Raw data: ${dataStr.substring(0, 100)}...`);
+                  }
+                }
+                currentEvent = ''; // Reset event after processing data
+              }
+            }
+          }
+        } catch (streamError: any) {
+          strapi.log.error(`Error reading Dify SSE stream: ${streamError.message}`);
         }
       })
       .catch((error) => {
@@ -206,7 +285,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
     const components: string[] = [];
     const dynamicZones: string[] = [];
-    
+
     for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
       if (attribute.type === 'component') {
         components.push(fieldName);
@@ -214,7 +293,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         dynamicZones.push(fieldName);
       }
     }
-    
+
     return { components, dynamicZones };
   },
 
@@ -228,7 +307,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const excludedFields = [
-      'id', 'documentId', 'createdAt', 'updatedAt', 'publishedAt', 
+      'id', 'documentId', 'createdAt', 'updatedAt', 'publishedAt',
       'createdBy', 'updatedBy', 'locale', 'localizations'
     ];
 
@@ -248,7 +327,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         localizableFields.push(fieldName);
       }
     }
-    
+
     return localizableFields;
   },
 
@@ -262,7 +341,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const populate: Record<string, boolean | object> = {};
-    
+
     for (const [fieldName, attribute] of Object.entries(schema.attributes)) {
       if (attribute.type === 'relation') {
         // For relations, just populate with documentId
@@ -279,7 +358,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         };
       }
     }
-    
+
     return populate;
   },
 
@@ -290,19 +369,19 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     if (!value) {
       return [];
     }
-    
+
     if (Array.isArray(value)) {
       return value
         .map((item: any) => item?.documentId || item?.id)
         .filter(Boolean) as string[];
     }
-    
+
     if (typeof value === 'object' && value !== null) {
       const obj = value as Record<string, unknown>;
       const id = obj.documentId || obj.id;
       return id ? [String(id)] : [];
     }
-    
+
     return [];
   },
 
@@ -440,6 +519,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       strapi.log.debug(`Merged data fields: ${Object.keys(mergedData).join(', ')}`);
 
       // Update or create the locale version
+      strapi.log.info(`Updating/creating locale version for ${contentType} (${documentId}) in locale ${locale}`);
       await strapi.documents(contentType as any).update({
         documentId,
         locale,
@@ -452,8 +532,8 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       const actionType = existingEntry ? 'Updated' : 'Created';
       strapi.log.info(`${actionType} translation for ${contentType} (${documentId}) in locale ${locale}`);
       strapi.log.info(`Translated fields: ${Object.keys(translatedFields).join(', ')}`);
-      strapi.log.info(`Copied fields from source: ${localizableFields.filter(f => 
-        !Object.keys(translatedFields).includes(f) && 
+      strapi.log.info(`Copied fields from source: ${localizableFields.filter(f =>
+        !Object.keys(translatedFields).includes(f) &&
         mergedData[f] !== undefined
       ).join(', ') || 'none'}`);
 
