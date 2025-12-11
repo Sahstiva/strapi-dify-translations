@@ -65,6 +65,74 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Check if a field path is nested (contains dot notation)
+   * e.g., "seo.title" returns true, "title" returns false
+   */
+  isNestedField(fieldPath: string): boolean {
+    return fieldPath.includes('.');
+  },
+
+  /**
+   * Parse a nested field path into component and field parts
+   * e.g., "seo.title" returns { component: "seo", field: "title" }
+   */
+  parseNestedField(fieldPath: string): { component: string; field: string } | null {
+    const parts = fieldPath.split('.');
+    if (parts.length !== 2) {
+      // Only support one level of nesting
+      return null;
+    }
+    return { component: parts[0], field: parts[1] };
+  },
+
+  /**
+   * Get a nested value from a document using dot notation
+   * e.g., getNestedValue(doc, "seo.title") returns doc.seo.title
+   */
+  getNestedValue(document: Record<string, unknown>, fieldPath: string): unknown {
+    const parsed = this.parseNestedField(fieldPath);
+    if (!parsed) {
+      return undefined;
+    }
+
+    const componentValue = document[parsed.component];
+    if (!componentValue || typeof componentValue !== 'object') {
+      return undefined;
+    }
+
+    return (componentValue as Record<string, unknown>)[parsed.field];
+  },
+
+  /**
+   * Set a nested value in a data object using dot notation
+   * Modifies the data object in place, creating the component object if needed
+   */
+  setNestedValue(
+    data: Record<string, unknown>,
+    fieldPath: string,
+    value: unknown,
+    existingComponent?: unknown
+  ): void {
+    const parsed = this.parseNestedField(fieldPath);
+    if (!parsed) {
+      return;
+    }
+
+    // Initialize component object if it doesn't exist
+    if (!data[parsed.component]) {
+      // Copy existing component data if available, otherwise create empty object
+      if (existingComponent && typeof existingComponent === 'object') {
+        data[parsed.component] = { ...existingComponent as Record<string, unknown> };
+      } else {
+        data[parsed.component] = {};
+      }
+    }
+
+    // Set the nested field value
+    (data[parsed.component] as Record<string, unknown>)[parsed.field] = value;
+  },
+
+  /**
    * Get content data for translation
    */
   async getContentForTranslation(documentId: string, contentType: string): Promise<Record<string, unknown>> {
@@ -78,10 +146,28 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       throw new Error('No translatable fields configured. Please set translatableFields in plugin config.');
     }
 
+    // Build populate object for components that might contain nested fields
+    const componentsToPopulate: Set<string> = new Set();
+    for (const field of translatableFields) {
+      if (this.isNestedField(field)) {
+        const parsed = this.parseNestedField(field);
+        if (parsed) {
+          componentsToPopulate.add(parsed.component);
+        }
+      }
+    }
+
+    // Create populate config
+    const populate: Record<string, boolean> = {};
+    for (const component of componentsToPopulate) {
+      populate[component] = true;
+    }
+
     // Fetch the document using Document Service API
     const document = await strapi.documents(contentType as any).findOne({
       documentId,
       locale: sourceLocale,
+      populate: Object.keys(populate).length > 0 ? populate : undefined,
     });
 
     if (!document) {
@@ -91,9 +177,19 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     // Extract only configured fields that exist and have values
     const fieldsToTranslate: Record<string, unknown> = {};
     for (const field of translatableFields) {
-      const value = document[field];
+      let value: unknown;
+
+      if (this.isNestedField(field)) {
+        // Handle nested field (e.g., "seo.title")
+        value = this.getNestedValue(document, field);
+      } else {
+        // Handle regular field
+        value = document[field];
+      }
+
       // Skip fields that don't exist or have no value (null, undefined, empty string)
       if (value !== undefined && value !== null && value !== '') {
+        // Use dot notation as the key so Dify receives exact field names
         fieldsToTranslate[field] = value;
       }
     }
@@ -514,18 +610,25 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     const { components: componentFields, dynamicZones: dynamicZoneFields } = this.getComponentFields(contentType);
     const localizableFields = this.getLocalizableFields(contentType);
 
-    // Filter incoming translated fields to only include configured translatable ones
-    const translatedFields: Record<string, unknown> = {};
+    // Separate regular and nested translated fields
+    const translatedRegularFields: Record<string, unknown> = {};
+    const translatedNestedFields: Record<string, unknown> = {};
+
     for (const [key, value] of Object.entries(fields)) {
       if (translatableFields.length === 0 || translatableFields.includes(key)) {
-        translatedFields[key] = value;
+        if (this.isNestedField(key)) {
+          translatedNestedFields[key] = value;
+        } else {
+          translatedRegularFields[key] = value;
+        }
       } else {
         strapi.log.warn(`Field ${key} is not in translatable fields config for ${contentType}, skipping`);
       }
     }
 
     strapi.log.info(`Storing translation for ${contentType} (${documentId}) in locale ${locale}`);
-    strapi.log.debug(`Translated fields from Dify: ${Object.keys(translatedFields).join(', ')}`);
+    strapi.log.debug(`Translated regular fields from Dify: ${Object.keys(translatedRegularFields).join(', ') || 'none'}`);
+    strapi.log.debug(`Translated nested fields from Dify: ${Object.keys(translatedNestedFields).join(', ') || 'none'}`);
 
     try {
       // Build populate object for fetching source document
@@ -555,7 +658,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       // Process all localizable fields
       for (const fieldName of localizableFields) {
         const sourceValue = sourceDocument[fieldName];
-        const translatedValue = translatedFields[fieldName];
+        const translatedValue = translatedRegularFields[fieldName];
         const existingValue = existingEntry?.[fieldName];
 
         // Check if this is a relation field
@@ -614,6 +717,55 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         }
       }
 
+      // Process nested fields (e.g., seo.title, seo.description)
+      for (const [nestedFieldPath, translatedValue] of Object.entries(translatedNestedFields)) {
+        const parsed = this.parseNestedField(nestedFieldPath);
+        if (!parsed) {
+          strapi.log.warn(`Invalid nested field path: ${nestedFieldPath}, skipping`);
+          continue;
+        }
+
+        // Get the component from source, existing, or initialize
+        const sourceComponent = sourceDocument[parsed.component];
+        const existingComponent = existingEntry?.[parsed.component];
+        const baseComponent = mergedData[parsed.component] || existingComponent || sourceComponent;
+
+        if (translatedValue !== undefined && translatedValue !== null) {
+          this.setNestedValue(mergedData, nestedFieldPath, translatedValue, baseComponent);
+          strapi.log.debug(`Set nested field ${nestedFieldPath} with translated value`);
+        }
+      }
+
+      // For components that have nested translated fields, also copy untranslated nested fields from source
+      const nestedComponentsProcessed = new Set<string>();
+      for (const nestedFieldPath of Object.keys(translatedNestedFields)) {
+        const parsed = this.parseNestedField(nestedFieldPath);
+        if (parsed) {
+          nestedComponentsProcessed.add(parsed.component);
+        }
+      }
+
+      // Check config for other nested fields that weren't translated and copy from source
+      for (const configField of translatableFields) {
+        if (this.isNestedField(configField) && !translatedNestedFields[configField]) {
+          const parsed = this.parseNestedField(configField);
+          if (parsed) {
+            // Get source value for this nested field
+            const sourceValue = this.getNestedValue(sourceDocument, configField);
+            const existingValue = existingEntry ? this.getNestedValue(existingEntry, configField) : undefined;
+            const valueToUse = existingValue ?? sourceValue;
+
+            if (valueToUse !== undefined && valueToUse !== null) {
+              const sourceComponent = sourceDocument[parsed.component];
+              const existingComponent = existingEntry?.[parsed.component];
+              const baseComponent = mergedData[parsed.component] || existingComponent || sourceComponent;
+              this.setNestedValue(mergedData, configField, valueToUse, baseComponent);
+              strapi.log.debug(`Copied untranslated nested field ${configField} from source/existing`);
+            }
+          }
+        }
+      }
+
       strapi.log.debug(`Merged data fields: ${Object.keys(mergedData).join(', ')}`);
 
       // Update or create the locale version
@@ -627,11 +779,12 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         },
       });
 
+      const allTranslatedFields = { ...translatedRegularFields, ...translatedNestedFields };
       const actionType = existingEntry ? 'Updated' : 'Created';
       strapi.log.info(`${actionType} translation for ${contentType} (${documentId}) in locale ${locale}`);
-      strapi.log.info(`Translated fields: ${Object.keys(translatedFields).join(', ')}`);
+      strapi.log.info(`Translated fields: ${Object.keys(allTranslatedFields).join(', ') || 'none'}`);
       strapi.log.info(`Copied fields from source: ${localizableFields.filter(f =>
-        !Object.keys(translatedFields).includes(f) &&
+        !Object.keys(translatedRegularFields).includes(f) &&
         mergedData[f] !== undefined
       ).join(', ') || 'none'}`);
 

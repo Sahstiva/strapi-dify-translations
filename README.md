@@ -6,6 +6,7 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
 
 - **Translate with Dify Button**: Adds a "Translate with Dify" action button in the Content Manager for collection types
 - **Language Selection Dialog**: Interactive dialog with checkboxes to select specific target languages for translation
+- **Nested Component Fields**: Support for translating fields inside components using dot notation (e.g., `seo.title`, `seo.description`)
 - **SSE Streaming Mode**: Uses Server-Sent Events for real-time progress logging from Dify workflows
 - **Smart Field Merging**: Translated fields from Dify are merged with untranslated fields from the source locale to keep content consistent
 - **Relation Handling**: Intelligently handles relations:
@@ -70,7 +71,14 @@ export default ({ env }) => ({
       callbackApiToken: env('DIFY_CALLBACK_TOKEN'),
       
       // Required: Fields to translate (must be configured)
-      translatableFields: ['title', 'content', 'excerpt', 'meta_title', 'meta_description'],
+      // Supports nested component fields using dot notation (one level only)
+      translatableFields: [
+        'title', 
+        'content', 
+        'excerpt', 
+        'seo.title',        // Nested field in 'seo' component
+        'seo.description'   // Nested field in 'seo' component
+      ],
       
       // Optional: Source locale (default: 'en')
       sourceLocale: 'en',
@@ -108,6 +116,24 @@ Authorization: your-secure-callback-token
 ```
 
 If no `callbackApiToken` is configured, the endpoint will be open (a warning will be logged).
+
+### Nested Component Fields
+
+You can translate fields inside components using dot notation. For example, if you have an `seo` component with `title` and `description` fields:
+
+```typescript
+translatableFields: [
+  'title',           // Regular field
+  'content',         // Regular field
+  'seo.title',       // Nested: seo component -> title field
+  'seo.description', // Nested: seo component -> description field
+]
+```
+
+**Limitations:**
+- Only one level of nesting is supported (e.g., `seo.title` works, but `seo.meta.title` does not)
+- The component must exist in the content type schema
+- Fields are sent to Dify with their exact dot notation names (e.g., `seo.title`)
 
 ## API Endpoints
 
@@ -198,6 +224,8 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
     "document_id": "d6x9zn0gqhsd8tghmz46wylm",
     "title": "Blog post for testing translations",
     "content": "Your content here...",
+    "seo.title": "SEO Title",
+    "seo.description": "SEO Description",
     "source_locale": "en",
     "target_locales": "[\"fr\", \"es\", \"de\"]",
     "callback_url": "https://your-strapi.com/api/dify-translations/callback?content_type=api::blog-post.blog-post"
@@ -209,6 +237,7 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
 
 **Note:** 
 - Fields are placed directly in `inputs` (not wrapped in a `fields` object)
+- Nested component fields use dot notation (e.g., `seo.title`, `seo.description`)
 - `target_locales` is a stringified JSON array containing only the user-selected languages
 - Only fields configured in `translatableFields` that have values are included
 - `response_mode` is set to `streaming` for Server-Sent Events (SSE) support
@@ -224,7 +253,9 @@ Your Dify workflow should call the callback URL for each translated locale:
   "locale": "es",
   "fields": {
     "title": "Título traducido",
-    "content": "Contenido traducido..."
+    "content": "Contenido traducido...",
+    "seo.title": "Título SEO traducido",
+    "seo.description": "Descripción SEO traducida"
   },
   "metadata": {
     "success": "true",
@@ -236,6 +267,7 @@ Your Dify workflow should call the callback URL for each translated locale:
 **Note:**
 - `document_id` uses underscore (not camelCase)
 - Translated fields are wrapped in `fields` object
+- Nested fields use the same dot notation as in the request (e.g., `seo.title`)
 - `metadata.success` should be `"true"` for successful translations
 - `metadata.error` contains error message if translation failed
 
