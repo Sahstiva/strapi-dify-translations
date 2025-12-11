@@ -5,9 +5,14 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
 ## Features
 
 - **Translate with Dify Button**: Adds a "Translate with Dify" action button in the Content Manager for collection types
-- **Automatic Field Detection**: Automatically detects translatable fields (string, text, richtext, blocks) that are localized via i18n
+- **Language Selection Dialog**: Interactive dialog with checkboxes to select specific target languages for translation
+- **SSE Streaming Mode**: Uses Server-Sent Events for real-time progress logging from Dify workflows
+- **Smart Field Merging**: Translated fields from Dify are merged with untranslated fields from the source locale to keep content consistent
+- **Relation Handling**: Intelligently handles relations:
+  - Non-localized relations are copied from source
+  - Localized relations are only connected if they exist in the target locale
+- **Component & Dynamic Zone Support**: Preserves components and dynamic zones when creating translations
 - **Callback Endpoint**: Receives translated content from Dify workflow and stores it as drafts
-- **Idempotency Support**: Uses runId to prevent duplicate translations
 - **Draft Mode**: All translations are saved as drafts (publishedAt=null) for review
 
 ## Installation
@@ -115,15 +120,22 @@ Send content to Dify for translation.
 ```json
 {
   "documentId": "abc123",
-  "contentType": "api::blog-post.blog-post"
+  "contentType": "api::blog-post.blog-post",
+  "targetLocales": ["fr", "es", "de"]
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `documentId` | string | Yes | The document ID to translate |
+| `contentType` | string | Yes | The content type UID (e.g., `api::blog-post.blog-post`) |
+| `targetLocales` | string[] | No | Array of target locale codes. If omitted, translates to all available locales except source. |
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Translation request sent for 3 locales"
+  "message": "Translation request sent for 3 locales. Results will be delivered via callback."
 }
 ```
 
@@ -132,6 +144,18 @@ Get plugin configuration (without API key).
 
 #### GET `/dify-translations/locales`
 Get available locales from i18n plugin.
+
+**Response:**
+```json
+{
+  "locales": [
+    { "code": "en", "name": "English" },
+    { "code": "fr", "name": "French" },
+    { "code": "es", "name": "Spanish" }
+  ],
+  "sourceLocale": "en"
+}
+```
 
 #### GET `/dify-translations/translatable-fields/:contentType`
 Get translatable fields for a content type.
@@ -166,7 +190,7 @@ Receive translated content from Dify workflow.
 
 ### Outgoing Payload (to Dify)
 
-When the user clicks "Translate with Dify", the plugin sends this payload to your Dify workflow:
+When the user clicks "Translate with Dify" and selects target languages, the plugin sends this payload to your Dify workflow:
 
 ```json
 {
@@ -178,15 +202,17 @@ When the user clicks "Translate with Dify", the plugin sends this payload to you
     "target_locales": "[\"fr\", \"es\", \"de\"]",
     "callback_url": "https://your-strapi.com/api/dify-translations/callback?content_type=api::blog-post.blog-post"
   },
-  "response_mode": "blocking",
+  "response_mode": "streaming",
   "user": "strapi-user"
 }
 ```
 
 **Note:** 
 - Fields are placed directly in `inputs` (not wrapped in a `fields` object)
-- `target_locales` is a stringified JSON array
+- `target_locales` is a stringified JSON array containing only the user-selected languages
 - Only fields configured in `translatableFields` that have values are included
+- `response_mode` is set to `streaming` for Server-Sent Events (SSE) support
+- The plugin logs SSE events (workflow_started, node_started, node_finished, workflow_finished) in real-time
 
 ### Expected Callback Payload (from Dify)
 
@@ -213,13 +239,34 @@ Your Dify workflow should call the callback URL for each translated locale:
 - `metadata.success` should be `"true"` for successful translations
 - `metadata.error` contains error message if translation failed
 
+### Callback Field Merging Behavior
+
+When the callback is received, the plugin intelligently merges content:
+
+| Field Type | Behavior |
+|------------|----------|
+| **Translated fields** | Applied from Dify response |
+| **Untranslated fields** | Copied from source locale |
+| **Non-localized relations** | Copied from source locale |
+| **Localized relations** | Only connected if related document exists in target locale |
+| **Components** | Preserved from existing target locale entry, or copied from source |
+| **Dynamic zones** | Preserved from existing target locale entry, or copied from source |
+
+This ensures that translated content is complete and consistent with the source, while avoiding errors from missing related documents.
+
 ## How It Works
 
 1. **User Action**: User opens a collection type entry in Content Manager and clicks "Translate with Dify"
-2. **Field Detection**: Plugin automatically detects all localized translatable fields
-3. **Send to Dify**: Plugin sends the source content (default: English) with all target locales to the configured Dify endpoint
-4. **Dify Processing**: Your Dify workflow processes the translation and calls the callback URL for each locale
-5. **Store Translation**: Plugin receives the callback and stores the translation as a draft using Strapi's Document Service API
+2. **Language Selection**: A dialog appears with checkboxes for all available target languages (all selected by default)
+3. **Field Detection**: Plugin automatically detects all configured translatable fields from the source locale
+4. **Send to Dify**: Plugin sends the source content with selected target locales to the configured Dify endpoint via SSE streaming
+5. **Dify Processing**: Your Dify workflow processes the translation and calls the callback URL for each locale
+6. **Smart Merging**: Plugin receives the callback and:
+   - Applies translated fields from Dify
+   - Copies untranslated fields from source locale
+   - Handles relations (copies non-localized relations, checks existence for localized relations)
+   - Preserves components and dynamic zones
+7. **Store Translation**: Translation is saved as a draft using Strapi's Document Service API
 
 ## Requirements
 
