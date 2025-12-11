@@ -1,6 +1,6 @@
 {
   "name": "strapi-dify-translations",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "Strapi plugin to translate content using Dify AI workflows",
   "license": "MIT",
   "author": "",
@@ -28,7 +28,13 @@
     "url": "https://github.com/Sahstiva/strapi-dify-translations/issues"
   },
   "homepage": "https://github.com/Sahstiva/strapi-dify-translations#readme",
-  "keywords": ["strapi", "strapi-plugin", "translations", "i18n", "dify"],
+  "keywords": [
+    "strapi",
+    "strapi-plugin",
+    "translations",
+    "i18n",
+    "dify"
+  ],
   "files": [
     "dist"
   ],
@@ -75,4 +81,3 @@
     "npm": ">=6.0.0"
   }
 }
-

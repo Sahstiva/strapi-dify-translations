@@ -133,6 +133,17 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Check if a field exists in the content type schema
+   */
+  fieldExistsInSchema(contentType: string, fieldName: string): boolean {
+    const schema = strapi.contentTypes[contentType] as ContentTypeSchema | undefined;
+    if (!schema) {
+      return false;
+    }
+    return fieldName in schema.attributes;
+  },
+
+  /**
    * Get content data for translation
    */
   async getContentForTranslation(documentId: string, contentType: string): Promise<Record<string, unknown>> {
@@ -147,11 +158,12 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     // Build populate object for components that might contain nested fields
+    // Only include components that actually exist in this content type
     const componentsToPopulate: Set<string> = new Set();
     for (const field of translatableFields) {
       if (this.isNestedField(field)) {
         const parsed = this.parseNestedField(field);
-        if (parsed) {
+        if (parsed && this.fieldExistsInSchema(contentType, parsed.component)) {
           componentsToPopulate.add(parsed.component);
         }
       }
@@ -181,6 +193,11 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
       if (this.isNestedField(field)) {
         // Handle nested field (e.g., "seo.title")
+        // Skip if the component doesn't exist in this content type
+        const parsed = this.parseNestedField(field);
+        if (!parsed || !this.fieldExistsInSchema(contentType, parsed.component)) {
+          continue;
+        }
         value = this.getNestedValue(document, field);
       } else {
         // Handle regular field
@@ -725,6 +742,12 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
           continue;
         }
 
+        // Skip if the component doesn't exist in this content type
+        if (!this.fieldExistsInSchema(contentType, parsed.component)) {
+          strapi.log.debug(`Component ${parsed.component} doesn't exist in ${contentType}, skipping nested field ${nestedFieldPath}`);
+          continue;
+        }
+
         // Get the component from source, existing, or initialize
         const sourceComponent = sourceDocument[parsed.component];
         const existingComponent = existingEntry?.[parsed.component];
@@ -740,7 +763,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       const nestedComponentsProcessed = new Set<string>();
       for (const nestedFieldPath of Object.keys(translatedNestedFields)) {
         const parsed = this.parseNestedField(nestedFieldPath);
-        if (parsed) {
+        if (parsed && this.fieldExistsInSchema(contentType, parsed.component)) {
           nestedComponentsProcessed.add(parsed.component);
         }
       }
@@ -750,6 +773,11 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         if (this.isNestedField(configField) && !translatedNestedFields[configField]) {
           const parsed = this.parseNestedField(configField);
           if (parsed) {
+            // Skip if the component doesn't exist in this content type
+            if (!this.fieldExistsInSchema(contentType, parsed.component)) {
+              continue;
+            }
+
             // Get source value for this nested field
             const sourceValue = this.getNestedValue(sourceDocument, configField);
             const existingValue = existingEntry ? this.getNestedValue(existingEntry, configField) : undefined;
