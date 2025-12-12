@@ -263,6 +263,7 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
     // Build callback URL
     const callbackUrl = `${serverUrl}/api${callbackBasePath}?content_type=${encodeURIComponent(contentType)}`;
+    strapi.log.info('Callback URL:', callbackUrl);
 
     // Prepare payload for Dify with new structure
     const payload = {
