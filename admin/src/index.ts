@@ -4,6 +4,17 @@ import { TranslateWithDifyAction } from './components/TranslateAction';
 
 export default {
   register(app: any) {
+    app.addSettingsLink('global', {
+      id: PLUGIN_ID,
+      intlLabel: {
+        id: `${PLUGIN_ID}.settings.title`,
+        defaultMessage: 'Dify Translations',
+      },
+      to: PLUGIN_ID,
+      Component: () => import('./pages/Settings'),
+      permissions: [],
+    });
+
     app.registerPlugin({
       id: PLUGIN_ID,
       initializer: Initializer,

@@ -6,6 +6,7 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
 
 - **Translate with Dify Button**: Adds a "Translate with Dify" action button in the Content Manager for collection types
 - **Language Selection Dialog**: Interactive dialog with checkboxes to select specific target languages for translation
+- **Admin Settings Page**: Configure plugin settings directly from Strapi admin panel (Settings → Dify Translations)
 - **Nested Component Fields**: Support for translating fields inside components using dot notation (e.g., `seo.title`, `seo.description`)
 - **SSE Streaming Mode**: Uses Server-Sent Events for real-time progress logging from Dify workflows
 - **Smart Field Merging**: Translated fields from Dify are merged with untranslated fields from the source locale to keep content consistent
@@ -54,6 +55,23 @@ npm install strapi-dify-translations
 
 ## Configuration
 
+### Option 1: Admin Settings Page (Recommended)
+
+After installing the plugin, navigate to **Settings → Dify Translations** in the Strapi admin panel to configure:
+
+| Setting | Description |
+|---------|-------------|
+| **Dify Endpoint** | The Dify workflow API endpoint URL |
+| **Dify API Key** | Your Dify API key for authentication (stored securely, displayed masked) |
+| **Callback URL** | Base URL of your Strapi instance (e.g., `https://your-strapi.com`) |
+| **Callback Base Path** | API path for the callback endpoint (default: `/dify-translations/callback`) |
+| **Dify User** | User identifier sent to Dify workflow (default: `strapi-user`) |
+| **Source Locale** | The default source language code (default: `en`) |
+
+Settings configured in the admin panel are stored in the database and take precedence over file-based configuration.
+
+### Option 2: File-based Configuration
+
 Add the plugin configuration to your Strapi project's `config/plugins.ts`:
 
 ```typescript
@@ -61,16 +79,16 @@ export default ({ env }) => ({
   'dify-translations': {
     enabled: true,
     config: {
-      // Required: Dify workflow endpoint URL
+      // Dify workflow endpoint URL
       difyEndpoint: env('DIFY_WORKFLOW_ENDPOINT'),
       
-      // Optional: API key for Dify authentication (outgoing requests to Dify)
+      // API key for Dify authentication (outgoing requests to Dify)
       difyApiKey: env('DIFY_API_KEY'),
       
       // Recommended: API token for callback authentication (incoming requests from Dify)
       callbackApiToken: env('DIFY_CALLBACK_TOKEN'),
       
-      // Required: Fields to translate (must be configured)
+      // Required: Fields to translate (must be configured in file)
       // Supports nested component fields using dot notation (one level only)
       translatableFields: [
         'title', 
@@ -80,13 +98,16 @@ export default ({ env }) => ({
         'seo.description'   // Nested field in 'seo' component
       ],
       
-      // Optional: Source locale (default: 'en')
+      // Source locale (default: 'en')
       sourceLocale: 'en',
       
-      // Optional: User identifier for Dify requests (default: 'strapi-user')
+      // User identifier for Dify requests (default: 'strapi-user')
       difyUser: 'strapi-user',
       
-      // Optional: Callback base path (default: '/dify-translations/callback')
+      // Callback URL base (your Strapi instance URL)
+      callbackUrl: env('STRAPI_URL', 'http://localhost:1337'),
+      
+      // Callback base path (default: '/dify-translations/callback')
       callbackBasePath: '/dify-translations/callback',
     },
   },
@@ -96,10 +117,13 @@ export default ({ env }) => ({
 Add environment variables to your `.env` file:
 
 ```env
+STRAPI_URL=https://your-strapi-instance.com
 DIFY_WORKFLOW_ENDPOINT=https://your-dify-instance.com/v1/workflows/run
 DIFY_API_KEY=your-dify-api-key
 DIFY_CALLBACK_TOKEN=your-secure-callback-token
 ```
+
+**Note:** Settings from the admin panel override file-based configuration. The `translatableFields` and `callbackApiToken` settings can only be configured via the file.
 
 ### Callback Authentication
 
@@ -183,8 +207,38 @@ Get available locales from i18n plugin.
 }
 ```
 
-#### GET `/dify-translations/translatable-fields/:contentType`
-Get translatable fields for a content type.
+#### GET `/dify-translations/translatable-fields`
+Get translatable fields from config.
+
+#### GET `/dify-translations/settings`
+Get plugin settings (API key is masked for security).
+
+**Response:**
+```json
+{
+  "difyEndpoint": "https://api.dify.ai/v1/workflows/run",
+  "difyApiKey": "••••••••",
+  "callbackUrl": "https://your-strapi.com",
+  "callbackBasePath": "/dify-translations/callback",
+  "difyUser": "strapi-user",
+  "sourceLocale": "en"
+}
+```
+
+#### PUT `/dify-translations/settings`
+Update plugin settings.
+
+**Request Body:**
+```json
+{
+  "difyEndpoint": "https://api.dify.ai/v1/workflows/run",
+  "difyApiKey": "app-xxxxx",
+  "callbackUrl": "https://your-strapi.com",
+  "callbackBasePath": "/dify-translations/callback",
+  "difyUser": "strapi-user",
+  "sourceLocale": "en"
+}
+```
 
 ### Content API (public)
 
@@ -228,12 +282,17 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
     "seo.description": "SEO Description",
     "source_locale": "en",
     "target_locales": "[\"fr\", \"es\", \"de\"]",
-    "callback_url": "https://your-strapi.com/api/dify-translations/callback?content_type=api::blog-post.blog-post"
+    "callback_url": "https://your-strapi.com/dify-translations/callback?content_type=api::blog-post.blog-post"
   },
   "response_mode": "streaming",
   "user": "strapi-user"
 }
 ```
+
+**Note:** The `callback_url` is constructed from `callbackUrl` + `callbackBasePath` settings. For example:
+- `callbackUrl`: `https://your-strapi.com`
+- `callbackBasePath`: `/dify-translations/callback`
+- Result: `https://your-strapi.com/dify-translations/callback?content_type=...`
 
 **Note:** 
 - Fields are placed directly in `inputs` (not wrapped in a `fields` object)

@@ -68,15 +68,25 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Get plugin configuration
    */
   async getConfig(ctx: any) {
-    const config = strapi.plugin('dify-translations').config;
-    
-    return ctx.send({
-      difyEndpoint: config('difyEndpoint'),
-      sourceLocale: config('sourceLocale'),
-      callbackBasePath: config('callbackBasePath'),
-      translatableFields: config('translatableFields'),
-      // Don't expose API keys
-    });
+    try {
+      const settings = await strapi
+        .plugin('dify-translations')
+        .service('settings')
+        .getSettings();
+      const config = strapi.plugin('dify-translations').config;
+
+      return ctx.send({
+        difyEndpoint: settings.difyEndpoint,
+        sourceLocale: settings.sourceLocale,
+        callbackUrl: settings.callbackUrl,
+        callbackBasePath: config('callbackBasePath'),
+        translatableFields: config('translatableFields'),
+        // Don't expose API keys
+      });
+    } catch (error: any) {
+      strapi.log.error('Get config error:', error);
+      return ctx.badRequest(error.message || 'Failed to get config');
+    }
   },
 
   /**
@@ -89,10 +99,12 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
         .service('translation')
         .getAvailableLocales();
 
-      const pluginConfig = strapi.plugin('dify-translations').config;
-      const sourceLocale = pluginConfig('sourceLocale') as string;
+      const settings = await strapi
+        .plugin('dify-translations')
+        .service('settings')
+        .getSettings();
 
-      return ctx.send({ locales, sourceLocale });
+      return ctx.send({ locales, sourceLocale: settings.sourceLocale });
     } catch (error: any) {
       strapi.log.error('Get locales error:', error);
       return ctx.badRequest(error.message || 'Failed to get locales');

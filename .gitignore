@@ -36,4 +36,7 @@ coverage/
 .cache/
 .tmp/
 .strapi/
+.yalc/
 
+
+yalc.lock

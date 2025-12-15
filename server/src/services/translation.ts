@@ -30,6 +30,13 @@ interface ContentTypeSchema {
 
 const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
+   * Get plugin settings (from store, with config fallbacks)
+   */
+  async getPluginSettings() {
+    return strapi.plugin('dify-translations').service('settings').getSettings();
+  },
+
+  /**
    * Get available locales from i18n plugin
    */
   async getAvailableLocales(): Promise<Array<{ code: string; name: string }>> {
@@ -147,8 +154,8 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Get content data for translation
    */
   async getContentForTranslation(documentId: string, contentType: string): Promise<Record<string, unknown>> {
-    const pluginConfig = strapi.plugin('dify-translations').config;
-    const sourceLocale = pluginConfig('sourceLocale') as string;
+    const settings = await this.getPluginSettings();
+    const sourceLocale = settings.sourceLocale;
 
     // Get configured translatable fields
     const translatableFields = this.getTranslatableFields();
@@ -225,13 +232,14 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     contentType: string,
     selectedLocales?: string[]
   ): Promise<{ success: boolean; message: string }> {
-    const pluginConfig = strapi.plugin('dify-translations').config;
-    const difyEndpoint = pluginConfig('difyEndpoint') as string;
-    const difyApiKey = pluginConfig('difyApiKey') as string;
-    const sourceLocale = pluginConfig('sourceLocale') as string;
-    const serverUrl = pluginConfig('callbackUrl') as string;
-    const callbackBasePath = pluginConfig('callbackBasePath') as string;
-    const difyUser = pluginConfig('difyUser') as string;
+    const settings = await this.getPluginSettings();
+
+    const difyEndpoint = settings.difyEndpoint;
+    const difyApiKey = settings.difyApiKey;
+    const sourceLocale = settings.sourceLocale;
+    const callbackUrl = settings.callbackUrl;
+    const callbackBasePath = settings.callbackBasePath;
+    const difyUser = settings.difyUser;
 
     if (!difyEndpoint) {
       throw new Error('Dify endpoint is not configured');
@@ -261,9 +269,9 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       throw new Error('No translatable content found');
     }
 
-    // Build callback URL
-    const callbackUrl = `${serverUrl}/api${callbackBasePath}?content_type=${encodeURIComponent(contentType)}`;
-    strapi.log.info('Callback URL:', callbackUrl);
+    // Build callback URL from base URL and path
+    const finalCallbackUrl = `${callbackUrl}${callbackBasePath}?content_type=${encodeURIComponent(contentType)}`;
+    strapi.log.info(`Callback URL: ${finalCallbackUrl}`);
 
     // Prepare payload for Dify with new structure
     const payload = {
@@ -272,13 +280,14 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
         ...fields,
         source_locale: sourceLocale,
         target_locales: JSON.stringify(targetLocales),
-        callback_url: callbackUrl,
+        callback_url: finalCallbackUrl,
       },
       response_mode: 'streaming',
       user: difyUser,
     };
 
-    strapi.log.info('Sending translation request to Dify:', JSON.stringify(payload, null, 2));
+    strapi.log.info(`Sending translation request to Dify, number of fields to translate: ${Object.keys(fields).length}`);
+    strapi.log.info(`Translating from ${sourceLocale} to ${targetLocales.join(', ')}`);
 
     // Send to Dify endpoint (fire-and-forget, don't wait for response)
     // Streaming mode returns Server-Sent Events (SSE)
@@ -619,8 +628,8 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
       throw new Error(`Content type ${contentType} not found`);
     }
 
-    const pluginConfig = strapi.plugin('dify-translations').config;
-    const sourceLocale = pluginConfig('sourceLocale') as string;
+    const settings = await this.getPluginSettings();
+    const sourceLocale = settings.sourceLocale;
 
     // Get configured translatable fields
     const translatableFields = this.getTranslatableFields();

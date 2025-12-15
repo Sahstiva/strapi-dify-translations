@@ -37,6 +37,24 @@ export default {
         description: 'Get translatable fields from config',
       },
     },
+    {
+      method: 'GET',
+      path: '/settings',
+      handler: 'settings.getSettings',
+      config: {
+        policies: [],
+        description: 'Get plugin settings',
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/settings',
+      handler: 'settings.setSettings',
+      config: {
+        policies: [],
+        description: 'Update plugin settings',
+      },
+    },
   ],
 };
 

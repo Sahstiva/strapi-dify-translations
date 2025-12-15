@@ -14,6 +14,23 @@
   "dialog.selectAtLeastOne": "Please select at least one language to translate to",
   "notification.success": "Translation request sent successfully",
   "notification.error": "Failed to send translation request",
-  "notification.saveFirst": "Document must be saved before translating"
+  "notification.saveFirst": "Document must be saved before translating",
+  "settings.title": "Dify Translations",
+  "settings.description": "Configure your Dify AI workflow integration for translations",
+  "settings.save": "Save",
+  "settings.saved": "Settings saved successfully",
+  "settings.error": "Failed to save settings",
+  "settings.difyEndpoint": "Dify Endpoint",
+  "settings.difyEndpoint.hint": "The Dify workflow API endpoint URL",
+  "settings.difyApiKey": "Dify API Key",
+  "settings.difyApiKey.hint": "Your Dify API key for authentication",
+  "settings.callbackUrl": "Callback URL",
+  "settings.callbackUrl.hint": "Full URL where Dify sends translations (overrides base path)",
+  "settings.callbackBasePath": "Callback Base Path",
+  "settings.callbackBasePath.hint": "API path for callback (used if Callback URL is empty)",
+  "settings.difyUser": "Dify User",
+  "settings.difyUser.hint": "User identifier sent to Dify workflow",
+  "settings.sourceLocale": "Source Locale",
+  "settings.sourceLocale.hint": "The default source language code (e.g., en, de, fr)"
 }
 
