@@ -6,10 +6,12 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
 
 - **Translate with Dify Button**: Adds a "Translate with Dify" action button in the Content Manager for collection types
 - **Language Selection Dialog**: Interactive dialog with checkboxes to select specific target languages for translation
+- **Real-time Progress Notifications**: Toast notifications showing translation progress as the Dify workflow executes
+- **Auto-refresh**: Page automatically refreshes when translation completes so you can see the results immediately
 - **Admin Settings Page**: Configure plugin settings directly from Strapi admin panel (Settings → Dify Translations)
 - **Nested Component Fields**: Support for translating fields inside components using dot notation (e.g., `seo.title`, `seo.description`)
-- **SSE Streaming Mode**: Uses Server-Sent Events for real-time progress logging from Dify workflows
-- **Smart Field Merging**: Translated fields from Dify are merged with untranslated fields from the source locale to keep content consistent
+- **SSE Streaming**: Processes Dify's Server-Sent Events for real-time workflow status tracking
+- **Smart Field Merging**: Translated fields from Dify are merged with untranslated fields from the source locale
 - **Relation Handling**: Intelligently handles relations:
   - Non-localized relations are copied from source
   - Localized relations are only connected if they exist in the target locale
@@ -19,7 +21,13 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
 
 ## Installation
 
-### Option 1: Local Development (Recommended for Development)
+### Option 1: npm Install
+
+```bash
+npm install strapi-dify-translations
+```
+
+### Option 2: Local Development
 
 1. Clone or copy this plugin to your development directory:
    ```bash
@@ -46,12 +54,6 @@ A Strapi 5 plugin to translate collection type content using Dify AI workflows.
    yalc add strapi-dify-translations
    npm install
    ```
-
-### Option 2: npm Install (After Publishing)
-
-```bash
-npm install strapi-dify-translations
-```
 
 ## Configuration
 
@@ -185,9 +187,13 @@ Send content to Dify for translation.
 ```json
 {
   "success": true,
-  "message": "Translation request sent for 3 locales. Results will be delivered via callback."
+  "message": "Translation request sent for 3 locale(s)",
+  "jobId": "job_1234567890_abc123"
 }
 ```
+
+#### GET `/dify-translations/progress/:jobId`
+Get progress events for a translation job (used internally for progress notifications).
 
 #### GET `/dify-translations/config`
 Get plugin configuration (without API key).
@@ -213,32 +219,8 @@ Get translatable fields from config.
 #### GET `/dify-translations/settings`
 Get plugin settings (API key is masked for security).
 
-**Response:**
-```json
-{
-  "difyEndpoint": "https://api.dify.ai/v1/workflows/run",
-  "difyApiKey": "••••••••",
-  "callbackUrl": "https://your-strapi.com",
-  "callbackBasePath": "/dify-translations/callback",
-  "difyUser": "strapi-user",
-  "sourceLocale": "en"
-}
-```
-
 #### PUT `/dify-translations/settings`
 Update plugin settings.
-
-**Request Body:**
-```json
-{
-  "difyEndpoint": "https://api.dify.ai/v1/workflows/run",
-  "difyApiKey": "app-xxxxx",
-  "callbackUrl": "https://your-strapi.com",
-  "callbackBasePath": "/dify-translations/callback",
-  "difyUser": "strapi-user",
-  "sourceLocale": "en"
-}
-```
 
 ### Content API (public)
 
@@ -248,21 +230,18 @@ Receive translated content from Dify workflow.
 **Request Body:**
 ```json
 {
-  "documentId": "abc123",
+  "document_id": "abc123",
   "locale": "fr",
   "fields": {
     "title": "Titre traduit",
-    "content": "Contenu traduit..."
+    "content": "Contenu traduit...",
+    "seo_title": "Titre SEO traduit",
+    "seo_description": "Description SEO traduite"
   },
-  "runId": "unique-run-id-for-idempotency"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Translation stored for locale fr"
+  "metadata": {
+    "success": "true",
+    "error": ""
+  }
 }
 ```
 
@@ -289,17 +268,12 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
 }
 ```
 
-**Note:** 
+**Notes:**
 - The `callback_url` is constructed from `callbackUrl` + `callbackBasePath` settings
 - Nested component fields use underscore notation for Dify compatibility (e.g., `seo.title` in config becomes `seo_title` in Dify)
-
-**Note:**
-- Fields are placed directly in `inputs` (not wrapped in a `fields` object)
-- Nested component fields use underscore notation for Dify compatibility (e.g., `seo.title` config becomes `seo_title`)
 - `target_locales` is a stringified JSON array containing only the user-selected languages
 - Only fields configured in `translatableFields` that have values are included
 - `response_mode` is set to `streaming` for Server-Sent Events (SSE) support
-- The plugin logs SSE events (workflow_started, node_started, node_finished, workflow_finished) in real-time
 
 ### Expected Callback Payload (from Dify)
 
@@ -322,12 +296,11 @@ Your Dify workflow should call the callback URL for each translated locale:
 }
 ```
 
-**Note:**
+**Notes:**
 - `document_id` uses underscore (not camelCase)
 - Translated fields are wrapped in `fields` object
-- Nested fields use underscore notation (e.g., `seo_title` instead of `seo.title`) for Dify compatibility
+- Nested fields use underscore notation (e.g., `seo_title` instead of `seo.title`)
 - `metadata.success` should be `"true"` for successful translations
-- `metadata.error` contains error message if translation failed
 
 ### Callback Field Merging Behavior
 
@@ -342,21 +315,16 @@ When the callback is received, the plugin intelligently merges content:
 | **Components** | Preserved from existing target locale entry, or copied from source |
 | **Dynamic zones** | Preserved from existing target locale entry, or copied from source |
 
-This ensures that translated content is complete and consistent with the source, while avoiding errors from missing related documents.
-
 ## How It Works
 
 1. **User Action**: User opens a collection type entry in Content Manager and clicks "Translate with Dify"
 2. **Language Selection**: A dialog appears with checkboxes for all available target languages (all selected by default)
-3. **Field Detection**: Plugin automatically detects all configured translatable fields from the source locale
-4. **Send to Dify**: Plugin sends the source content with selected target locales to the configured Dify endpoint via SSE streaming
-5. **Dify Processing**: Your Dify workflow processes the translation and calls the callback URL for each locale
-6. **Smart Merging**: Plugin receives the callback and:
-   - Applies translated fields from Dify
-   - Copies untranslated fields from source locale
-   - Handles relations (copies non-localized relations, checks existence for localized relations)
-   - Preserves components and dynamic zones
-7. **Store Translation**: Translation is saved as a draft using Strapi's Document Service API
+3. **Send to Dify**: Plugin sends the source content to Dify via SSE streaming
+4. **Progress Updates**: Toast notifications show the progress of the Dify workflow in real-time
+5. **Dify Processing**: Your Dify workflow translates the content and calls the callback URL for each locale
+6. **Smart Merging**: Plugin receives callbacks and merges translated fields with existing content
+7. **Auto-refresh**: Page automatically refreshes when complete so you can see the translated content
+8. **Store Translation**: Translations are saved as drafts using Strapi's Document Service API
 
 ## Requirements
 
@@ -384,4 +352,3 @@ npm run verify
 ## License
 
 MIT
-
