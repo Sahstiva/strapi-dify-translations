@@ -157,7 +157,7 @@ translatableFields: [
 **Limitations:**
 - Only one level of nesting is supported (e.g., `seo.title` works, but `seo.meta.title` does not)
 - The component must exist in the content type schema
-- Fields are sent to Dify with their exact dot notation names (e.g., `seo.title`)
+- Fields are sent to Dify with underscore notation (e.g., `seo.title` in config becomes `seo_title` in Dify)
 
 ## API Endpoints
 
@@ -278,8 +278,8 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
     "document_id": "d6x9zn0gqhsd8tghmz46wylm",
     "title": "Blog post for testing translations",
     "content": "Your content here...",
-    "seo.title": "SEO Title",
-    "seo.description": "SEO Description",
+    "seo_title": "SEO Title",
+    "seo_description": "SEO Description",
     "source_locale": "en",
     "target_locales": "[\"fr\", \"es\", \"de\"]",
     "callback_url": "https://your-strapi.com/dify-translations/callback?content_type=api::blog-post.blog-post"
@@ -289,14 +289,13 @@ When the user clicks "Translate with Dify" and selects target languages, the plu
 }
 ```
 
-**Note:** The `callback_url` is constructed from `callbackUrl` + `callbackBasePath` settings. For example:
-- `callbackUrl`: `https://your-strapi.com`
-- `callbackBasePath`: `/dify-translations/callback`
-- Result: `https://your-strapi.com/dify-translations/callback?content_type=...`
-
 **Note:** 
+- The `callback_url` is constructed from `callbackUrl` + `callbackBasePath` settings
+- Nested component fields use underscore notation for Dify compatibility (e.g., `seo.title` in config becomes `seo_title` in Dify)
+
+**Note:**
 - Fields are placed directly in `inputs` (not wrapped in a `fields` object)
-- Nested component fields use dot notation (e.g., `seo.title`, `seo.description`)
+- Nested component fields use underscore notation for Dify compatibility (e.g., `seo.title` config becomes `seo_title`)
 - `target_locales` is a stringified JSON array containing only the user-selected languages
 - Only fields configured in `translatableFields` that have values are included
 - `response_mode` is set to `streaming` for Server-Sent Events (SSE) support
@@ -313,8 +312,8 @@ Your Dify workflow should call the callback URL for each translated locale:
   "fields": {
     "title": "Título traducido",
     "content": "Contenido traducido...",
-    "seo.title": "Título SEO traducido",
-    "seo.description": "Descripción SEO traducida"
+    "seo_title": "Título SEO traducido",
+    "seo_description": "Descripción SEO traducida"
   },
   "metadata": {
     "success": "true",
@@ -326,7 +325,7 @@ Your Dify workflow should call the callback URL for each translated locale:
 **Note:**
 - `document_id` uses underscore (not camelCase)
 - Translated fields are wrapped in `fields` object
-- Nested fields use the same dot notation as in the request (e.g., `seo.title`)
+- Nested fields use underscore notation (e.g., `seo_title` instead of `seo.title`) for Dify compatibility
 - `metadata.success` should be `"true"` for successful translations
 - `metadata.error` contains error message if translation failed
 

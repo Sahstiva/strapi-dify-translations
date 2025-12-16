@@ -93,6 +93,30 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Convert internal field name (dot notation) to Dify-compatible format (underscore)
+   * e.g., "seo.title" -> "seo_title"
+   */
+  toDifyFieldName(fieldPath: string): string {
+    return fieldPath.replace('.', '_');
+  },
+
+  /**
+   * Convert Dify field name (underscore) back to internal format (dot notation)
+   * e.g., "seo_title" -> "seo.title"
+   * Only converts if the field matches a configured translatable field pattern
+   */
+  fromDifyFieldName(difyFieldName: string, translatableFields: string[]): string {
+    // Check if any translatable field would match when converted
+    for (const configField of translatableFields) {
+      if (this.toDifyFieldName(configField) === difyFieldName) {
+        return configField;
+      }
+    }
+    // Return as-is if no match (regular field)
+    return difyFieldName;
+  },
+
+  /**
    * Get a nested value from a document using dot notation
    * e.g., getNestedValue(doc, "seo.title") returns doc.seo.title
    */
@@ -213,8 +237,9 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
 
       // Skip fields that don't exist or have no value (null, undefined, empty string)
       if (value !== undefined && value !== null && value !== '') {
-        // Use dot notation as the key so Dify receives exact field names
-        fieldsToTranslate[field] = value;
+        // Convert dot notation to underscore for Dify compatibility (e.g., "seo.title" -> "seo_title")
+        const difyFieldName = this.toDifyFieldName(field);
+        fieldsToTranslate[difyFieldName] = value;
       }
     }
 
@@ -638,18 +663,22 @@ const service = ({ strapi }: { strapi: Core.Strapi }) => ({
     const localizableFields = this.getLocalizableFields(contentType);
 
     // Separate regular and nested translated fields
+    // Convert Dify field names (underscore) back to internal format (dot notation)
     const translatedRegularFields: Record<string, unknown> = {};
     const translatedNestedFields: Record<string, unknown> = {};
 
-    for (const [key, value] of Object.entries(fields)) {
-      if (translatableFields.length === 0 || translatableFields.includes(key)) {
-        if (this.isNestedField(key)) {
-          translatedNestedFields[key] = value;
+    for (const [difyKey, value] of Object.entries(fields)) {
+      // Convert from Dify format (seo_title) to internal format (seo.title)
+      const internalKey = this.fromDifyFieldName(difyKey, translatableFields);
+      
+      if (translatableFields.length === 0 || translatableFields.includes(internalKey)) {
+        if (this.isNestedField(internalKey)) {
+          translatedNestedFields[internalKey] = value;
         } else {
-          translatedRegularFields[key] = value;
+          translatedRegularFields[internalKey] = value;
         }
       } else {
-        strapi.log.warn(`Field ${key} is not in translatable fields config for ${contentType}, skipping`);
+        strapi.log.warn(`Field ${difyKey} (internal: ${internalKey}) is not in translatable fields config for ${contentType}, skipping`);
       }
     }
 
