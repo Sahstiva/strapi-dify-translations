@@ -18,6 +18,16 @@ interface Locale {
   name: string;
 }
 
+interface ProgressEvent {
+  jobId: string;
+  type: 'started' | 'node_started' | 'node_finished' | 'completed' | 'error';
+  message: string;
+  current?: number;
+  total?: number;
+  nodeName?: string;
+  index?: number;
+}
+
 /**
  * Check if an error is an abort error (should be silently ignored)
  */
@@ -33,57 +43,106 @@ function isAbortError(error: unknown): boolean {
 }
 
 /**
+ * Start polling for progress updates
+ */
+function startProgressPolling(
+  jobId: string,
+  onProgress: (event: ProgressEvent) => void,
+  onComplete: (success: boolean, message: string) => void,
+  fetchFn: (url: string) => Promise<any>
+): () => void {
+  let stopped = false;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let lastEventIndex = 0;
+
+  const poll = async () => {
+    if (stopped) return;
+
+    try {
+      const response = await fetchFn(`/${PLUGIN_ID}/progress/${jobId}?since=${lastEventIndex}`);
+      const data = response.data;
+      
+      if (data.events && Array.isArray(data.events)) {
+        for (const event of data.events) {
+          lastEventIndex = Math.max(lastEventIndex, (event.index || 0) + 1);
+          
+          onProgress(event as ProgressEvent);
+          
+          if (event.type === 'completed') {
+            stopped = true;
+            if (pollInterval) clearInterval(pollInterval);
+            onComplete(true, event.message);
+            return;
+          } else if (event.type === 'error') {
+            stopped = true;
+            if (pollInterval) clearInterval(pollInterval);
+            onComplete(false, event.message);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      // Silently ignore polling errors
+    }
+  };
+
+  // Start polling immediately and then every 1 second
+  poll();
+  pollInterval = setInterval(poll, 1000);
+
+  // Auto-stop after 5 minutes
+  const timeout = setTimeout(() => {
+    if (!stopped) {
+      stopped = true;
+      if (pollInterval) clearInterval(pollInterval);
+      onComplete(false, 'Translation timed out');
+    }
+  }, 5 * 60 * 1000);
+
+  return () => {
+    stopped = true;
+    if (pollInterval) clearInterval(pollInterval);
+    clearTimeout(timeout);
+  };
+}
+
+/**
  * Dialog content component to handle state for locale selection
  */
 function TranslateDialogContent({
-  documentId,
-  model,
-  onSuccess,
+  onSubmit,
   onError,
 }: {
-  documentId: string;
-  model: string;
-  onSuccess: (message: string) => void;
+  onSubmit: (selectedLocales: string[]) => void;
   onError: (message: string) => void;
 }) {
-  const { get, post } = useFetchClient();
-  const [isLoading, setIsLoading] = useState(false);
+  const { get } = useFetchClient();
   const [isLoadingLocales, setIsLoadingLocales] = useState(true);
   const [locales, setLocales] = useState<Locale[]>([]);
   const [sourceLocale, setSourceLocale] = useState<string>('en');
   const [selectedLocales, setSelectedLocales] = useState<Set<string>>(new Set());
-  
-  // Track if component is mounted to avoid state updates after unmount
   const isMountedRef = useRef(true);
 
-  // Fetch available locales when dialog opens
   useEffect(() => {
     isMountedRef.current = true;
 
     const fetchLocales = async () => {
       try {
-        const response = await get(`/${PLUGIN_ID}/locales`);
+        const localesResponse = await get(`/${PLUGIN_ID}/locales`);
         
-        // Check if still mounted before updating state
         if (!isMountedRef.current) return;
         
-        const { locales: fetchedLocales, sourceLocale: fetchedSourceLocale } = response.data;
+        const { locales: fetchedLocales, sourceLocale: fetchedSourceLocale } = localesResponse.data;
         
         setSourceLocale(fetchedSourceLocale || 'en');
         
-        // Filter out the source locale
         const targetLocales = fetchedLocales.filter(
           (locale: Locale) => locale.code !== fetchedSourceLocale
         );
         setLocales(targetLocales);
-        
-        // Select all locales by default
         setSelectedLocales(new Set(targetLocales.map((l: Locale) => l.code)));
       } catch (error) {
-        // Ignore abort errors (component unmounted)
         if (isAbortError(error)) return;
-        
-        console.error('Failed to fetch locales:', error);
         if (isMountedRef.current) {
           onError('Failed to load available languages');
         }
@@ -96,7 +155,6 @@ function TranslateDialogContent({
 
     fetchLocales();
 
-    // Cleanup: mark as unmounted
     return () => {
       isMountedRef.current = false;
     };
@@ -116,53 +174,18 @@ function TranslateDialogContent({
 
   const handleSelectAll = () => {
     if (selectedLocales.size === locales.length) {
-      // Deselect all
       setSelectedLocales(new Set());
     } else {
-      // Select all
       setSelectedLocales(new Set(locales.map((l) => l.code)));
     }
   };
 
-  const handleTranslate = async () => {
+  const handleTranslate = () => {
     if (selectedLocales.size === 0) {
       onError('Please select at least one language to translate to');
       return;
     }
-
-    setIsLoading(true);
-    try {
-      const response = await post(`/${PLUGIN_ID}/translate`, {
-        documentId,
-        contentType: model,
-        targetLocales: Array.from(selectedLocales),
-      });
-
-      // Check if still mounted before updating state
-      if (!isMountedRef.current) return;
-
-      if (response.data?.success) {
-        onSuccess(response.data.message || 'Translation request sent successfully');
-      } else {
-        throw new Error(response.data?.message || 'Translation failed');
-      }
-    } catch (error: any) {
-      // Ignore abort errors (component unmounted or dialog closed)
-      if (isAbortError(error)) return;
-      
-      console.error('Translation error:', error);
-      if (isMountedRef.current) {
-        onError(
-          error?.response?.data?.error?.message ||
-            error.message ||
-            'Failed to send translation request'
-        );
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false);
-      }
-    }
+    onSubmit(Array.from(selectedLocales));
   };
 
   const allSelected = selectedLocales.size === locales.length && locales.length > 0;
@@ -224,7 +247,6 @@ function TranslateDialogContent({
           <Button
             variant="success"
             onClick={handleTranslate}
-            loading={isLoading}
             disabled={isLoadingLocales || selectedLocales.size === 0}
           >
             Translate ({selectedLocales.size} {selectedLocales.size === 1 ? 'language' : 'languages'})
@@ -237,36 +259,103 @@ function TranslateDialogContent({
 
 /**
  * Header action component for translating content with Dify
- * This is a DescriptionComponent that returns a HeaderActionDescription
  */
 export function TranslateWithDifyAction({
   documentId,
   model,
   collectionType,
 }: DocumentActionProps) {
+  const { get, post } = useFetchClient();
   const { toggleNotification } = useNotification();
   const [isLoading, setIsLoading] = useState(false);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  // Only show for collection types
   if (collectionType !== 'collection-types') {
     return null;
   }
 
-  // Document must be saved first
   if (!documentId) {
     return null;
   }
 
-  const handleSuccess = (message: string) => {
-    setIsLoading(false);
+  const handleProgress = (event: ProgressEvent) => {
+    if (event.type === 'node_started' && event.nodeName) {
+      const progressText = event.total ? ` (${event.current}/${event.total})` : '';
+      toggleNotification({
+        type: 'info',
+        message: `${event.nodeName}${progressText}`,
+      });
+    } else if (event.type === 'node_finished' && event.message.includes('Saved')) {
+      toggleNotification({
+        type: 'success',
+        message: event.message,
+      });
+    }
+  };
+
+  const handleSubmit = async (selectedLocales: string[]) => {
+    setIsLoading(true);
+
     toggleNotification({
-      type: 'success',
-      message,
+      type: 'info',
+      message: 'Translation started...',
     });
+
+    try {
+      const response = await post(`/${PLUGIN_ID}/translate`, {
+        documentId,
+        contentType: model,
+        targetLocales: selectedLocales,
+      });
+
+      if (response.data?.success) {
+        const jobId = response.data.jobId;
+
+        if (jobId) {
+          if (unsubscribeRef.current) {
+            unsubscribeRef.current();
+          }
+
+          unsubscribeRef.current = startProgressPolling(
+            jobId,
+            handleProgress,
+            (success, completionMessage) => {
+              setIsLoading(false);
+              toggleNotification({
+                type: success ? 'success' : 'danger',
+                message: completionMessage,
+              });
+              unsubscribeRef.current = null;
+              
+              // Refresh the page after successful translation to show updated content
+              if (success) {
+                setTimeout(() => {
+                  window.location.reload();
+                }, 1500); // Small delay so user can see the success message
+              }
+            },
+            get
+          );
+        } else {
+          setIsLoading(false);
+          toggleNotification({
+            type: 'success',
+            message: response.data.message || 'Translation request sent successfully',
+          });
+        }
+      } else {
+        throw new Error(response.data?.message || 'Translation failed');
+      }
+    } catch (error: any) {
+      setIsLoading(false);
+      toggleNotification({
+        type: 'danger',
+        message: error?.response?.data?.error?.message || error.message || 'Failed to send translation request',
+      });
+    }
   };
 
   const handleError = (message: string) => {
-    setIsLoading(false);
     toggleNotification({
       type: 'danger',
       message,
@@ -283,9 +372,7 @@ export function TranslateWithDifyAction({
       title: 'Translate with Dify',
       content: (
         <TranslateDialogContent
-          documentId={documentId}
-          model={model}
-          onSuccess={handleSuccess}
+          onSubmit={handleSubmit}
           onError={handleError}
         />
       ),

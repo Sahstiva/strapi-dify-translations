@@ -55,6 +55,15 @@ export default {
         description: 'Update plugin settings',
       },
     },
+    {
+      method: 'GET',
+      path: '/progress/:jobId',
+      handler: 'progress.getProgress',
+      config: {
+        policies: [],
+        description: 'Get progress events for a translation job',
+      },
+    },
   ],
 };
 
