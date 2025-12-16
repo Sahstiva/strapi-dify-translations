@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useFetchClient, useNotification } from '@strapi/strapi/admin';
 import { Dialog, Flex, Typography, Button, Checkbox, Box, Loader } from '@strapi/design-system';
-import { Earth } from '@strapi/icons';
+import { Languages } from 'lucide-react';
 import { PLUGIN_ID } from '../pluginId';
 
 interface DocumentActionProps {
@@ -275,7 +275,7 @@ export function TranslateWithDifyAction({
 
   return {
     type: 'icon' as const,
-    icon: <Earth />,
+    icon: <Languages size={16} />,
     disabled: isLoading,
     label: isLoading ? 'Translating...' : 'Translate with Dify',
     dialog: {
